@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Большие данные и веса
+/data/
+*.parquet
+*.csv
+*.npy
+*.pkl
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+
+# Любые изображения по умолчанию игнорируются
+*.png
+*.jpg
+*.jpeg
+
+# Картинки в docs/ нужны для иллюстраций — оставляем
+!docs/**/*.png
+!docs/**/*.jpg
+!docs/**/*.jpeg
+
+# Логи и эксперименты
+wandb/
+runs/
+lightning_logs/
+mlruns/
+experiments/*/checkpoints/
+experiments/*/logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
