@@ -16,6 +16,7 @@ env/
 
 # Большие данные и веса
 /data/
+/build/
 *.parquet
 *.csv
 *.npy
@@ -25,6 +26,7 @@ env/
 *.ckpt
 *.bin
 *.safetensors
+*.mlpackage/
 
 # Любые изображения по умолчанию игнорируются
 *.png
