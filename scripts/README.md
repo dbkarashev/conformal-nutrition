@@ -20,10 +20,11 @@ pip install "torch" "transformers<5" "sentence-transformers" \
 ## export_onnx.py — DINOv2 и MiniLM в ONNX
 
 Дублирует то, что в Kaggle делает ноутбук 05, но локально, чтобы файлы
-сразу попадали в каталог `ios/Resources/` для Bundle Xcode-проекта.
+сразу попадали в Resources iOS-приложения. Источник правды для UI —
+отдельный репо `dbkarashev/foon`, склонированный рядом:
 
 ```bash
-python scripts/export_onnx.py --output_dir ios/Resources/
+python scripts/export_onnx.py --output_dir ../foon/Foon/Foon/Resources/
 ```
 
 На выходе:
@@ -54,11 +55,11 @@ CoreML execution provider — он сам отдаёт совместимые п
 ```bash
 python scripts/convert_to_coreml.py \
     --cqr_head build/cqr_head.pt \
-    --output_dir ios/Resources/ \
+    --output_dir ../foon/Foon/Foon/Resources/ \
     --components head
 ```
 
-На выходе: `ios/Resources/cqr_head.mlpackage` (~1 МБ).
+На выходе: `../foon/Foon/Foon/Resources/cqr_head.mlpackage` (~1 МБ).
 
 `--components all` соберёт ещё и энкодеры — но они упадут на
 `upsample_bicubic2d` для DINOv2. Используй только если хочется
