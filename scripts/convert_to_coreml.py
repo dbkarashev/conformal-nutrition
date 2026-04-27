@@ -39,6 +39,10 @@ TEXT_MAX_LEN = 64
 VIS_ENCODER = "facebook/dinov2-small"
 TEXT_ENCODER = "sentence-transformers/all-MiniLM-L6-v2"
 
+IMAGE_SIZE = 224
+PATCH_SIZE = 14  # DINOv2-small
+TARGET_GRID = IMAGE_SIZE // PATCH_SIZE  # 16
+
 
 def mlp(in_dim: int, hidden: int, out_dim: int, dropout: float) -> nn.Sequential:
     return nn.Sequential(
@@ -97,21 +101,56 @@ def convert_cqr_head(ckpt_path: Path, out_path: Path) -> None:
             ct.TensorType(name="v", shape=(1, VIS_DIM)),
             ct.TensorType(name="t", shape=(1, TEXT_DIM)),
         ],
+        outputs=[ct.TensorType(name="quantiles")],
         compute_precision=ct.precision.FLOAT16,
         minimum_deployment_target=ct.target.iOS17,
     )
     m.save(str(out_path))
 
 
+def freeze_pos_embeddings(encoder, target_grid: int) -> None:
+    """Заранее интерполирует position_embeddings под фиксированный input
+    и зашивает как константу, плюс перекрывает `interpolate_pos_encoding`,
+    чтобы он возвращал готовые pos_embeddings без интерполяции.
+
+    Без перекрытия в transformers стоит `if not torch.jit.is_tracing()` —
+    при трейсе всегда идёт через bicubic-ветку «на случай dynamic shapes»,
+    которую CoreML не поддерживает. У нас input размер фиксирован (224×224
+    под `target_grid=16`), поэтому interpolate в forward не нужен."""
+    import torch.nn.functional as F
+    pos = encoder.embeddings.position_embeddings.data
+    cls_pos = pos[:, :1, :]
+    patch_pos = pos[:, 1:, :]
+    src_grid = int(round(patch_pos.shape[1] ** 0.5))
+    dim = patch_pos.shape[-1]
+    patch_pos = patch_pos.reshape(1, src_grid, src_grid, dim).permute(0, 3, 1, 2)
+    new_patch = F.interpolate(
+        patch_pos, size=(target_grid, target_grid),
+        mode="bicubic", align_corners=False,
+    )
+    new_patch = new_patch.permute(0, 2, 3, 1).reshape(1, target_grid * target_grid, dim)
+    new_pos = torch.cat([cls_pos, new_patch], dim=1)
+    encoder.embeddings.position_embeddings = nn.Parameter(new_pos, requires_grad=False)
+
+    def _identity_pos_encoding(self, embeddings, height, width):
+        return self.position_embeddings
+
+    encoder.embeddings.interpolate_pos_encoding = _identity_pos_encoding.__get__(
+        encoder.embeddings, type(encoder.embeddings)
+    )
+
+
 def convert_visual(out_path: Path) -> None:
     from transformers import AutoModel
     encoder = AutoModel.from_pretrained(VIS_ENCODER).eval()
+    freeze_pos_embeddings(encoder, target_grid=TARGET_GRID)
     wrapped = VisualWrapper(encoder).eval()
-    example = torch.randn(1, 3, 224, 224)
-    traced = torch.jit.trace(wrapped, example)
+    example = torch.randn(1, 3, IMAGE_SIZE, IMAGE_SIZE)
+    traced = torch.jit.trace(wrapped, example, strict=False)
     m = ct.convert(
         traced,
-        inputs=[ct.TensorType(name="pixel_values", shape=(1, 3, 224, 224))],
+        inputs=[ct.TensorType(name="pixel_values", shape=(1, 3, IMAGE_SIZE, IMAGE_SIZE))],
+        outputs=[ct.TensorType(name="embedding")],
         compute_precision=ct.precision.FLOAT16,
         minimum_deployment_target=ct.target.iOS17,
     )
@@ -131,6 +170,7 @@ def convert_text(out_path: Path) -> None:
             ct.TensorType(name="input_ids", shape=(1, TEXT_MAX_LEN), dtype=int),
             ct.TensorType(name="attention_mask", shape=(1, TEXT_MAX_LEN), dtype=int),
         ],
+        outputs=[ct.TensorType(name="embedding")],
         compute_precision=ct.precision.FLOAT16,
         minimum_deployment_target=ct.target.iOS17,
     )

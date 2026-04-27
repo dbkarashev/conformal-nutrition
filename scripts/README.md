@@ -2,13 +2,15 @@
 
 Локальные скрипты для подготовки артефактов под iOS-деплой. Не
 используются в Kaggle-ноутбуках. Все скрипты ожидают что-то в `build/`
-и кладут результаты тоже в `build/` (директория в `.gitignore`).
+(директория в `.gitignore`) и пишут результаты в `Resources/` соседнего
+iOS-репо `dbkarashev/foon`.
 
 ## Окружение
 
 Нужен **Python 3.11 или 3.12**. На 3.13/3.14 нативные библиотеки
-coremltools не собираются. ONNX-экспорт ломается на свежем
-`transformers>=5` — фиксируем 4.x.
+coremltools не собираются. Tracing моделей в transformers ломается на
+свежем `transformers>=5` — фиксируем 4.x. coremltools 9 не дружит с
+NumPy 2 — берем 1.x.
 
 ```bash
 python3.12 -m venv .venv312
@@ -17,31 +19,29 @@ pip install "torch" "transformers<5" "sentence-transformers" \
             "coremltools" "numpy<2" "onnx"
 ```
 
-## export_onnx.py — DINOv2 и MiniLM в ONNX
+## convert_to_coreml.py
 
-Дублирует то, что в Kaggle делает ноутбук 05, но локально, чтобы файлы
-сразу попадали в Resources iOS-приложения. Источник правды для UI —
-отдельный репо `dbkarashev/foon`, склонированный рядом:
+Конвертация всех трех компонентов pipeline в нативный CoreML
+(`.mlpackage`, FP16) для запуска на ANE. Путь PyTorch → torch.jit.trace
+→ ct.convert. Делает три модели: визуальный энкодер DINOv2-small,
+текстовый MiniLM-L6-v2 и CQR-голову.
 
-```bash
-python scripts/export_onnx.py --output_dir ../foon/Foon/Foon/Resources/
-```
+### Особенности конвертации DINOv2
 
-На выходе:
-- `visual_dinov2_small.onnx` (~84 МБ)
-- `text_minilm_l6_v2.onnx` (~86 МБ)
+DINOv2 в transformers вызывает `interpolate_pos_encoding` с bicubic-
+интерполяцией позиционных эмбеддингов на нестандартном входе, а
+coremltools `upsample_bicubic2d` не поддерживает. Скрипт это решает
+заранее:
 
-Альтернатива — просто скачать готовые из output ноутбука 05 на Kaggle.
+1. Считает интерполяцию pos_embeddings под фиксированный input 224×224
+   (16×16 patches + CLS) и заменяет их в весах модели.
+2. Перекрывает метод `interpolate_pos_encoding` на возврат готовых
+   pos_embeddings без дополнительных операций. В transformers стоит
+   `if not torch.jit.is_tracing()` — по умолчанию при трейсе всегда
+   идет через bicubic «ради dynamic shapes». У нас input размер
+   фиксирован, поэтому интерполяция в forward не нужна.
 
-## convert_to_coreml.py — CQR-голова в CoreML
-
-ONNX → CoreML путь в coremltools 6+ убран. Делаем напрямую из PyTorch
-через `torch.jit.trace` + `ct.convert`. Конвертируется только голова
-(простая MLP). Энкодеры через CoreML не идут — DINOv2 в transformers
-использует bicubic-интерполяцию позиционных эмбеддингов на
-нестандартном входе 224×224, а coremltools `upsample_bicubic2d` не
-поддерживает. Для энкодеров используем ONNX через onnxruntime с
-CoreML execution provider — он сам отдаёт совместимые подграфы на ANE.
+После этого граф чистый, конвертация проходит и модель работает на ANE.
 
 ### Подготовка чекпоинта
 
@@ -55,13 +55,32 @@ CoreML execution provider — он сам отдаёт совместимые п
 ```bash
 python scripts/convert_to_coreml.py \
     --cqr_head build/cqr_head.pt \
-    --output_dir ../foon/Foon/Foon/Resources/ \
-    --components head
+    --output_dir ../foon/Foon/Foon/Resources/
 ```
 
-На выходе: `../foon/Foon/Foon/Resources/cqr_head.mlpackage` (~1 МБ).
+На выходе три файла в Resources iOS-приложения:
 
-`--components all` соберёт ещё и энкодеры — но они упадут на
-`upsample_bicubic2d` для DINOv2. Используй только если хочется
-поэкспериментировать с входом 518×518 (нативный размер DINOv2 без
-интерполяции).
+- `cqr_head.mlpackage` (~1 МБ)
+- `visual_dinov2_small.mlpackage` (~41 МБ FP16)
+- `text_minilm_l6_v2.mlpackage` (~43 МБ FP16)
+
+Дополнительно в `Resources/` нужны (если их там еще нет):
+
+- `normalization.json` — `mean`, `std` целей из `target_norm.json`
+  ноутбука 02.
+- `conformal_quantiles.json` — поле `cqr_q` из `conformal_quantiles.json`
+  ноутбука 04.
+- `tokenizer/` — папка с `tokenizer.json`, `vocab.txt`,
+  `tokenizer_config.json` и т. п. от `sentence-transformers/all-MiniLM-L6-v2`.
+
+Выкачать tokenizer:
+
+```bash
+mkdir -p ../foon/Foon/Foon/Resources/tokenizer
+cd ../foon/Foon/Foon/Resources/tokenizer
+for f in tokenizer.json tokenizer_config.json vocab.txt special_tokens_map.json config.json; do
+  curl -sLo "$f" "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/$f"
+done
+```
+
+Эти файлы статичные, скачать достаточно один раз.
