@@ -41,4 +41,4 @@ All experiments run on Kaggle. Each notebook publishes its outputs as a Kaggle D
 
 ## License
 
-MIT © 2026 Damir Karashev.
+This project is licensed under the [MIT License](LICENSE).
