@@ -114,7 +114,7 @@ def freeze_pos_embeddings(encoder, target_grid: int) -> None:
     чтобы он возвращал готовые pos_embeddings без интерполяции.
 
     Без перекрытия в transformers стоит `if not torch.jit.is_tracing()` —
-    при трейсе всегда идёт через bicubic-ветку «на случай dynamic shapes»,
+    при трейсе всегда идет через bicubic-ветку «на случай dynamic shapes»,
     которую CoreML не поддерживает. У нас input размер фиксирован (224×224
     под `target_grid=16`), поэтому interpolate в forward не нужен."""
     import torch.nn.functional as F
